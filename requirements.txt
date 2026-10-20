@@ -1,6 +1,8 @@
 streamlit==1.32.0
 transformers==4.38.2
-torch==2.2.1
-mariadb==1.1.10
+torch==2.2.1 --index-url https://download.pytorch.org/whl/cpu
+pymysql==1.1.0
+cryptography==42.0.5
 python-dotenv==1.0.1
 pandas==2.2.1
+
