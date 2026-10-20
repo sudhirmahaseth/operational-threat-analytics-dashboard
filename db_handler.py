@@ -1,5 +1,5 @@
 import os
-import pymysql  # mariadb ki jagah pymysql use karenge (Cloud-safe aur stable hai)
+import pymysql
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
@@ -9,30 +9,51 @@ load_dotenv()
 def get_db_connection():
     """Establishes database connection with Aiven Cloud MySQL / Local Database."""
     try:
-        # Streamlit production pe st.secrets check karega, local pe .env file ya default values chalengi
         conn = pymysql.connect(
             host=st.secrets.get("DB_HOST", os.getenv("DB_HOST", "localhost")),
             user=st.secrets.get("DB_USER", os.getenv("DB_USER", "admin")),
             password=st.secrets.get("DB_PASSWORD", os.getenv("DB_PASSWORD", "password")),
-            database=st.secrets.get("DB_NAME", os.getenv("DB_NAME", "threat_analytics")),
-            # Default MySQL port 3306 hai, lekin Aiven ka port 25060 hota hai
-            port=int(st.secrets.get("DB_PORT", os.getenv("DB_PORT", 3306))),
+            database=st.secrets.get("DB_NAME", os.getenv("DB_NAME", "defaultdb")), # Aiven defaultdb map kiya
+            port=int(st.secrets.get("DB_PORT", os.getenv("DB_PORT", 16852))),
             ssl_verify_identity=False,
-            ssl_ca=None  # Aiven secure clusters ke liye connection verify handle kar leta hai
+            ssl_ca=None
         )
         return conn
     except Exception as e:
         print(f"Error connecting to Database Platform: {e}")
         return None
 
+def initialize_table_if_not_exists():
+    """Automatically creates the required event logs table if it is missing in Aiven."""
+    conn = get_db_connection()
+    if conn is not None:
+        try:
+            cursor = conn.cursor()
+            # Agar table nahi bani hai, toh system ise khud generate kar lega
+            create_table_query = """
+                CREATE TABLE IF NOT EXISTS event_security_logs (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    log_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    host_identifier VARCHAR(100),
+                    severity_level VARCHAR(50),
+                    payload_message TEXT
+                );
+            """
+            cursor.execute(create_table_query)
+            conn.commit()
+            print("Database table checked/created successfully!")
+        except Exception as e:
+            print(f"Auto-initialization error: {e}")
+        finally:
+            conn.close()
+
+# App load hote hi sabse pehle table setup triggers confirm karna
+initialize_table_if_not_exists()
+
 def fetch_historical_threat_metrics():
-    """
-    Executes optimized relational queries to group analytical summary records 
-    without causing processing bottlenecks.
-    """
+    """Executes relational queries to fetch latest logs from the auto-created table."""
     conn = get_db_connection()
     if conn is None:
-        # Return fallback dummy dataframe if database is offline during staging
         return pd.DataFrame({
             'Timestamp': pd.date_range(end=pd.Timestamp.now(), periods=5, freq='H'),
             'Host': ['Server-01A', 'DB-Main', 'Auth-Gateway', 'Server-01A', 'Edge-Node'],
@@ -42,7 +63,6 @@ def fetch_historical_threat_metrics():
     
     try:
         cursor = conn.cursor()
-        # Query aapke schema ke tables ke mutabik execute hogi
         query = """
             SELECT log_timestamp, host_identifier, severity_level, payload_message 
             FROM event_security_logs 
@@ -53,9 +73,9 @@ def fetch_historical_threat_metrics():
         df = pd.DataFrame(rows, columns=['Timestamp', 'Host', 'Severity', 'Message'])
     except Exception as e:
         print(f"Error executing query: {e}")
-        # Table na hone ya error aane par safe return dashboard crash hone se bachayega
         df = pd.DataFrame(columns=['Timestamp', 'Host', 'Severity', 'Message'])
     finally:
         conn.close()
         
     return df
+    
