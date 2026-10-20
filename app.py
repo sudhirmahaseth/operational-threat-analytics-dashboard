@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
-from db_handler import fetch_historical_threat_metrics
+# db_handler se log insert karne wala function bhi import karein
+from db_handler import fetch_historical_threat_metrics, get_db_connection 
+import datetime
 
 # Streamlit Page Configurations
 st.set_page_config(
@@ -24,14 +26,43 @@ def mock_huggingface_nlp_inference(raw_log):
         return "MEDIUM", "🟡"
     return "LOW", "🟢"
 
+# Live Database Log Ingestion Logic
+def save_log_to_database(host, log_message, severity):
+    """Inserts the real-time analyzed log into Aiven Cloud Database."""
+    conn = get_db_connection()
+    if conn is not None:
+        try:
+            cursor = conn.cursor()
+            # Apne exact column names ke hisab se query verify kar lein
+            query = """
+                INSERT INTO event_security_logs (log_timestamp, host_identifier, severity_level, payload_message)
+                VALUES (%s, %s, %s, %s);
+            """
+            current_time = datetime.datetime.now()
+            cursor.execute(query, (current_time, host, severity, log_message))
+            conn.commit()
+        except Exception as e:
+            st.sidebar.error(f"DB Write Error: {e}")
+        finally:
+            conn.close()
+
 # Sidebar for new ad-hoc text logs analysis
 st.sidebar.header("🔍 Ad-hoc NLP Log Parser")
 user_log_input = st.sidebar.text_area("Paste raw unstructured log line here:")
 
-if st.sidebar.button("Analyze Log Trace"):
+if st.sidebar.button("Analyze & Ingest Log"):
     if user_log_input.strip():
+        # 1. NLP Pipeline Inference Run karna
         severity, emoji = mock_huggingface_nlp_inference(user_log_input)
+        
+        # 2. Live Database me data save karna (Host placeholder 'AdHoc-Gateway' rakha hai)
+        save_log_to_database(host="AdHoc-Gateway", log_message=user_log_input.strip(), severity=severity)
+        
         st.sidebar.success(f"Classification Result: {emoji} {severity}")
+        st.sidebar.caption("✅ Log successfully ingested into Aiven Cloud Database!")
+        
+        # Clear cache taaki data live refresh ho jaye dashboard par
+        st.rerun() 
     else:
         st.sidebar.warning("Please enter a valid text log line to execute pipeline inference.")
 
